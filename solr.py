@@ -9,14 +9,9 @@ from xymon import Xymon
 
 
 class XymonSolr:
-    def __init__(self, hostname: str, service: str, yellow_time: int, red_time: int, core_list: list,
-                 solr_admin_url: str,
-                 log_level: int = logging.INFO, yellow_count: int = 10, red_count: int = 5):
-        self.yellow_time = yellow_time
-        self.red_time = red_time
-        self.yellow_count = yellow_count
-        self.red_count = red_count
-        self.core_list = core_list
+    def __init__(self, hostname: str, service: str, core_list: dict,
+                 solr_admin_url: str, log_level: int = logging.INFO):
+        self._core_dict = core_list
         self.log_level = log_level
         self.logger = logging
         self.hostname = hostname
@@ -41,17 +36,38 @@ class XymonSolr:
                 last_modified_str = info["index"].get("lastModified")
                 last_modified = datetime.datetime.strptime(last_modified_str,
                                                            '%Y-%m-%dT%H:%M:%S.%fZ') if last_modified_str else None
-                if core in self.core_list:
-                    if num_docs < self.red_count or not last_modified or last_modified < datetime.datetime.now() - datetime.timedelta(
-                            minutes=self.red_time):
+                if core in self._core_dict:
+                    core_settings = self._core_dict[core]
+                    report_text += (
+                        f"Core: {core}\n\n"
+                        f"Conditions for Yellow: Number of documents < {core_settings['yellow_count']} or \n"
+                        f"last modified date is older than {core_settings['yellow_time']} minutes\n"
+                        f"Conditions for Red: Number of documents < {core_settings['red_count']} or \n"
+                        f"last modified date is older than {core_settings['red_time']} minutes\n\n"
+
+                    )
+                    if num_docs < core_settings['red_count']:
                         color_check = "red"
-                        report_text += f"Core: {core} {self._red_icon()}\nNumber of Documents: {num_docs}\nLast Modified Date: {last_modified}\n\n"
-                    elif num_docs < self.yellow_count or last_modified < datetime.datetime.now() - datetime.timedelta(
-                            minutes=self.yellow_time):
-                        color_check = "yellow"
-                        report_text += f"Core: {core} {self._yellow_icon()}\nNumber of Documents: {num_docs}\nLast Modified Date: {last_modified}\n\n"
+                        report_text += f"Number of Documents: {num_docs} {self._red_icon()}\n"
+                    elif num_docs < core_settings['yellow_count']:
+                        if color_check != "red":
+                            color_check = "yellow"
+                        report_text += f"Number of Documents: {num_docs} {self._yellow_icon()}\n"
                     else:
-                        report_text += f"Core: {core} {self._green_icon()}\nNumber of Documents: {num_docs}\nLast Modified Date: {last_modified}\n\n"
+                        report_text += f"Number of Documents: {num_docs} {self._green_icon()}\n"
+
+                    if not last_modified or last_modified < datetime.datetime.now() - datetime.timedelta(minutes=core_settings['red_time']):
+                        color_check = "red"
+                        report_text += f"Last Modified Date: {last_modified} {self._red_icon()}\n\n"
+                    elif last_modified < datetime.datetime.now() - datetime.timedelta(minutes=core_settings['yellow_time']):
+                        if color_check != "red":
+                            color_check = "yellow"
+                        report_text += f"Last Modified Date: {last_modified} {self._yellow_icon()}\n\n"
+                    else:
+                        report_text += f"Last Modified Date: {last_modified} {self._green_icon()}\n\n"
+
+                    report_text += "--------------------------------\n\n"
+                report_text += "\nVersion: 1.0\n"
                 self.server.report(host=self.hostname, test=self.service, color=color_check, message=report_text)
                 self.logger.debug(report_text)
         except requests.RequestException as e:
@@ -79,12 +95,14 @@ class XymonSolr:
 
 if __name__ == "__main__":
     # get $MACHINE bash environment variable
-    cores = ["core1", "core2"]
+    cores = {
+        'core_1': {'yellow_time': 1500, 'red_time': 1900, 'yellow_count': 50, 'red_count': 5},
+        'core_2': {'yellow_time': 120, 'red_time': 720, 'yellow_count': 50, 'red_count': 5},
+        'core_3': {'yellow_time': 1500, 'red_time': 1900, 'yellow_count': 50, 'red_count': 5},
+        'core_4': {'yellow_time': 120, 'red_time': 720, 'yellow_count': 50, 'red_count': 5}
+    }
+
     xymon = XymonSolr(hostname=os.getenv("MACHINE"), service="solr",
-                      red_time=720,
-                      yellow_time=120,
-                      yellow_count=50,
-                      red_count=5,
                       core_list=cores,
-                      solr_admin_url="http://localhost:8984/solr/admin/cores?action=STATUS&wt=json")
+                      solr_admin_url="http://localhost:8983/solr/admin/cores?action=STATUS&wt=json")
     xymon.check_solr_state()
